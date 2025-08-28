@@ -1,0 +1,96 @@
+name: Deploy to AWS Lambda
+
+on:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  id-token: write   # Required for OIDC authentication
+  contents: read    # Required to checkout the repository
+
+env:
+  AWS_REGION: <YOUR_AWS_REGION>  # e.g., us-west-1
+  LAMBDA_FUNCTION_NAME: <YOUR_LAMBDA_FUNCTION_NAME>  # e.g., PeerSupportTesting
+  CODEDEPLOY_APPLICATION: <YOUR_CODEDEPLOY_APPLICATION>  # e.g., PeerSupportTest
+  CODEDEPLOY_DEPLOYMENT_GROUP: <YOUR_CODEDEPLOY_DEPLOYMENT_GROUP>  # e.g., PeerSupportDeploymentGroup
+
+jobs:
+  deploy:
+    name: Deploy Lambda Function
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Configure AWS credentials with OIDC
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Create deployment package
+      run: |
+        mkdir package
+        pip install -r requirements.txt -t package/
+        cp lambda_function.py package/
+        cd package && zip -r ../lambda-deployment.zip .
+
+    - name: Deploy to Lambda with Blue/Green
+      run: |
+        # Get current alias version
+        CURRENT_VERSION=$(aws lambda get-alias \
+          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+          --name live \
+          --region ${{ env.AWS_REGION }} \
+          --query 'FunctionVersion' --output text)
+        
+        # Update function code and publish new version
+        NEW_VERSION=$(aws lambda update-function-code \
+          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+          --zip-file fileb://lambda-deployment.zip \
+          --region ${{ env.AWS_REGION }} \
+          --publish \
+          --query 'Version' --output text)
+        
+        # No environment variable update needed
+        
+        # Create AppSpec content
+        cat > appspec.json << EOF
+        {
+          "version": 0.0,
+          "Resources": [{
+            "myLambdaFunction": {
+              "Type": "AWS::Lambda::Function",
+              "Properties": {
+                "Name": "${{ env.LAMBDA_FUNCTION_NAME }}",
+                "Alias": "live",
+                "CurrentVersion": "$CURRENT_VERSION",
+                "TargetVersion": "$NEW_VERSION"
+              }
+            }
+          }]
+          # Uncomment to add integration testing before traffic shift:
+          # ,"Hooks": [{
+          #   "BeforeAllowTraffic": "arn:aws:lambda:${{ env.AWS_REGION }}:<YOUR_AWS_ACCOUNT_ID>:function:<YOUR_INTEGRATION_TEST_FUNCTION>"
+          # }]
+        }
+        EOF
+        
+        # Deploy with CodeDeploy
+        APPSPEC_CONTENT=$(cat appspec.json | tr -d '\n' | sed 's/"/\\"/g')
+        aws deploy create-deployment \
+          --application-name ${{ env.CODEDEPLOY_APPLICATION }} \
+          --deployment-group-name ${{ env.CODEDEPLOY_DEPLOYMENT_GROUP }} \
+          --revision "{\"revisionType\":\"AppSpecContent\",\"appSpecContent\":{\"content\":\"$APPSPEC_CONTENT\"}}" \
+          --region ${{ env.AWS_REGION }}
