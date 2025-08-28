@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 
 Resources:
-  PeerSupportTesting:
+  MyLambdaFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: .
@@ -12,7 +12,7 @@ Resources:
       Timeout: 30
       Environment:
         Variables:
-          SECRET_ENV: <YOUR_SECRET_NAME>  # e.g., peer-support-prod-config
+          SECRET_ENV: <YOUR_SECRET_NAME>  # e.g., my-app-prod-config
           AWS_REGION: !Ref AWS::Region
       # AutoPublishAlias: live
       # DeploymentPreference:
@@ -21,7 +21,7 @@ Resources:
       #     - AliasErrorMetricGreaterThanZeroAlarm
       Policies:
         - DynamoDBReadPolicy:
-            TableName: <YOUR_DYNAMODB_TABLE>  # e.g., PeerSupportTestTable
+            TableName: <YOUR_DYNAMODB_TABLE>  # e.g., MyAppTable
         - Statement:
           - Effect: Allow
             Action:
@@ -50,6 +50,6 @@ Resources:
       Threshold: 0
       Dimensions:
         - Name: FunctionName
-          Value: !Ref PeerSupportTesting
+          Value: !Ref MyLambdaFunction
         - Name: Resource
-          Value: !Sub "${PeerSupportTesting}:live"
+          Value: !Sub "${MyLambdaFunction}:live"

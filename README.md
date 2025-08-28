@@ -93,7 +93,7 @@ DeploymentPreference:
 sam build
 
 # Test locally
-sam local invoke PeerSupportTesting --event event.json
+sam local invoke MyLambdaFunction --event event.json
 
 # Start local API
 sam local start-api
